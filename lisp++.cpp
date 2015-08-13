@@ -29,14 +29,23 @@ Expression atom(const std::string& val) {
   // attempts to parse as int
   try
   {
-    return boost::lexical_cast<int>(val);
+    // XXX: I have to nest atom/number/int because otherwise expression
+    // thinks int is a double.
+    return Atom(Number(boost::lexical_cast<int>(val)));
   }
   catch(const boost::bad_lexical_cast &) {}
 
   // attempts to parse as double
   try
   {
-    return boost::lexical_cast<double>(val);
+    return Atom(Number(boost::lexical_cast<double>(val)));
+  }
+  catch(const boost::bad_lexical_cast &) {}
+
+  // attempt to parse as bool
+  try
+  {
+    return Atom(boost::lexical_cast<bool>(val));
   }
   catch(const boost::bad_lexical_cast &) {}
 
@@ -85,14 +94,18 @@ class eval_visitor: public boost::static_visitor<Expression>
 public:
   eval_visitor(Env& env) : m_env(env) {}
 
+  template<typename T>
+  Expression operator()( const T& t ) const
+  {
+    return t;
+  }
+
   Expression operator()( const Symbol& sym ) const
   {
-    // TODO: remove
-    std::cout << "symbol: " << sym << std::endl;
     auto it = m_env.find(sym);
     if (it == m_env.end()) {
       // TODO: improve error message construction
-      return std::string("Could not find symbol '"+sym+"'");
+      return Symbol("Could not find symbol '"+sym+"'");
     }
 
     return it->second;
@@ -100,9 +113,22 @@ public:
 
   Expression operator()( const Number& num ) const
   {
+    // XXX: need to properly nest the number or else visitors get confused
+    // between int and bool
+    return Atom(num);
+  }
+
+  Expression operator()( const Atom& atom ) const
+  {
+    return boost::apply_visitor(*this,atom);
+  }
+
+  Expression operator()( const Proc& proc ) const
+  {
     // TODO: remove
-    std::cout << "number: " << num << std::endl;
-    return num;
+    std::cout << "proc: " << std::endl;
+    // TODO: actually implement
+    return proc;
   }
 
   Expression operator()( const Expression& expr ) const
@@ -115,48 +141,67 @@ public:
   Expression operator()( const List& list ) const
   {
     // TODO: remove
-    std::cout << "list: " << std::endl;
+    print_visitor v;
+    //std::cout << "list[0]: "<< boost::apply_visitor(v,list[0])<< std::endl;
 
     // TODO: whats the right thing here?
     if (list.size() == 0) {
-      return std::string("nil");
+      return Symbol("nil");
     }
 
-    std::string proc = boost::get<std::string>(list[0]);
+    // TODO: is it always a string?
+    auto procPair = getAtom<Symbol>(list[0]);
+    if (procPair.first) {
+      Symbol proc = procPair.second;
 
-    if (proc == "quote") {
-      Expression exp = list[1];      
-      return exp;
-    }
+      if (proc == "quote") {
+        Expression exp = list[1];
+        return exp;
+      }
 
-    if (proc == "if") {
-      Expression test = list[1];
-      Expression conseq = list[2];
-      Expression alt = list[3];
-      
-      // TODO: refactor once tested
-      Expression out = eval(test,m_env);
-      Number t = boost::get<Number>(out);
-      int b = boost::get<int>(t);
-      if (b) {
-        return conseq;
-      } else {
-        return alt;
+      if (proc == "if") {
+        Expression test = list[1];
+        Expression conseq = list[2];
+        Expression alt = list[3];
+
+        Expression out = eval(test,m_env);
+        auto b = mustGetAtom<bool>(out);
+        return b? conseq : alt;
+      }
+
+      if (proc == "define") {
+        auto var = mustGetAtom<Symbol>(list[1]);
+        Expression exp = list[2];
+        m_env[var] = exp;
+
+        return exp;
+      }
+
+      // TODO other special forms: apply, lambda?
+
+      //auto func = boost::get<Proc>(boost::apply_visitor(*this,list[0]));
+      auto funcPair = getVariant<Proc>(boost::apply_visitor(*this,list[0]));
+      if (funcPair.first) {
+        auto func = funcPair.second;
+        // evaluate each arg
+        List args;
+        auto it = list.begin()+1;
+        for (; it != list.end(); it++) {
+          args.push_back(boost::apply_visitor(*this,*it));
+        }
+
+        return func(args);
       }
 
     }
 
-    if (proc == "define") {
-      Symbol var = boost::get<Symbol>(list[1]);
-      Expression exp = list[2];
-      m_env[var] = exp;
-      return exp;
+    // eval each element and return the list
+    List out;
+    auto it = list.begin();
+    for (; it != list.end(); it++) {
+      out.push_back(boost::apply_visitor(*this,*it));
     }
-
-    // TODO other special forms: apply, lambda?
-
-    // TODO: handle list correctly
-    return boost::apply_visitor(*this,list[0]);
+    return out;
   }
 
 private:
@@ -164,11 +209,13 @@ private:
 };
 
 Expression eval(const Expression& x, Env& env) {
+  // TODO: remove
+  print_visitor pv;
+  std::cout << "evaluating: "<< boost::apply_visitor(pv,x)<< std::endl;
+
   eval_visitor v(env);
   return boost::apply_visitor(v,x);
 }
-
-
 
 
 ///
@@ -177,7 +224,7 @@ Expression eval(const Expression& x, Env& env) {
 
 
 int main() {
-
+  // parse test
   auto program = "(foo (bar baz) (print hello world) (+ 1 1.5))";
   std::cout << "program:" << program << std::endl;
 
@@ -185,15 +232,35 @@ int main() {
   Expression ast = parse(program);
   std::cout << "ast: " << ::apply_visitor(visitor,ast) << std::endl;
 
-  Env env;
-  Expression out = eval(ast,env);
+  // eval testing
+  Env& env = global_env;
+  Expression out = eval(parse(program),env);
   std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
 
-  
-  out = eval(parse("(define r 0)"),env);
+  out = eval(parse("(define r true)"),env);
   out = eval(parse("(if r 5 3)"),env);
   std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
 
+  out = eval(parse("(if r 5 3)"),env);
+  std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
+
+  out = eval(parse("(car (1 2 3 4))"),env);
+  std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
+
+  out = eval(parse("(cons 1 2)"),env);
+  std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
+
+  out = eval(parse("(cons 1)"),env);
+  std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
+
+  out = eval(parse("(atom r)"),env);
+  std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
+
+  out = eval(parse("(atom (1.5))"),env);
+  std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
+
+  out = eval(parse("(atom (r))"),env);
+  std::cout << "evaled: " << ::apply_visitor(visitor,out) << std::endl;
 
   return 0;
 }
