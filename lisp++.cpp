@@ -149,12 +149,15 @@ public:
       return Symbol("nil");
     }
 
-    // TODO: is it always a string?
     auto procPair = getAtom<Symbol>(list[0]);
     if (procPair.first) {
       Symbol proc = procPair.second;
 
+      // TODO: these special forms can be implemented as built-ins like
+      // cons and cdr. Though putting them in the env will allow them to be
+      // over-written.
       if (proc == "quote") {
+        // TODO: test this. I think we need to return the rest of the list
         Expression exp = list[1];
         return exp;
       }
@@ -177,6 +180,7 @@ public:
         return exp;
       }
 
+      // TODO: continue here. Implement lambda
       // TODO other special forms: apply, lambda?
 
       //auto func = boost::get<Proc>(boost::apply_visitor(*this,list[0]));
@@ -221,9 +225,25 @@ Expression eval(const Expression& x, Env& env) {
 ///
 /// REPL
 ///
+void repl() {
+  print_visitor pv;
+  std::string input;
+  Env& env = global_env;
+
+  std::cout << "lisp++> ";
+  // TODO: allow multiline input
+  while(std::getline(std::cin,input)) {
+    Expression out = eval(parse(input),env);
+    std::cout << "evaled: " << boost::apply_visitor(pv,out) << std::endl;
+    std::cout << "lisp++> ";
+  }
+}
+
 
 
 int main() {
+  repl();
+
   // parse test
   auto program = "(foo (bar baz) (print hello world) (+ 1 1.5))";
   std::cout << "program:" << program << std::endl;

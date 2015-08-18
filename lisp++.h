@@ -115,6 +115,52 @@ public:
   }
 };
 
+template<typename Func,typename Ret>
+class binary_op_visitor
+: public boost::static_visitor<Ret>
+{
+public:
+binary_op_visitor(Func& op) : m_op(op) {}
+
+
+  template<typename T, typename U>
+    Ret operator()( const T&, const U&) {
+    return Ret();
+  }
+
+  template<typename T>
+    bool operator()( const T& lhs, const T& rhs) {
+    return boost::apply_visitor(*this,lhs,rhs);
+  }
+
+  Ret operator()( const List& lhs, const List& rhs) {
+    return Ret();
+  }
+
+  Ret operator()( const Proc& lhs, const Proc& rhs) {
+    return Ret();
+  }
+
+  Ret operator()( const Symbol& lhs, const Symbol& rhs) {
+    return m_op(lhs,rhs);
+  }
+
+  Ret operator()( const int& lhs, const int& rhs) {
+    return m_op(lhs,rhs);
+  }
+
+  Ret operator()( const double& lhs, const double& rhs) {
+    return m_op(lhs,rhs);
+  }
+
+  Ret operator()( const Ret& lhs, const Ret& rhs) {
+    return m_op(lhs,rhs);
+  }
+
+private:
+  Func& m_op;
+};
+
 // built-in S-Expression functions
 // car (x.e) - returns x
 auto _car_ = [](const Expression& exp) -> Expression { 
@@ -167,7 +213,64 @@ auto _eq_ = [](const Expression& a) -> Expression {
   return false;
 };
 
+/*
+auto _lambda_ = [](const Expression& a) -> Expression { 
+  Expression func = _cons_(a);
+  Expression args = _cdr_(a);
+
+  if (boost::get<bool>(_atom_(x)) && boost::get<bool>(_atom_(y))) {
+    equality_visitor v;
+    return boost::apply_visitor(v,x,y);
+  }
+
+  return false;
+};
+*/
+
 // TODO: add apply function
+
+
+// less important but useful built-ins
+
+// + x y - addition
+auto _plus_ = [](const Expression& a) -> Expression { 
+  Expression x = _cons_(a);
+  Expression y = _cons_(_cdr_(a));
+
+  if (boost::get<bool>(_atom_(x)) && boost::get<bool>(_atom_(y))) {
+    return boost::apply_visitor(op,x,y);
+  }
+
+  return false;
+};
+
+// - x y - subtraction. Could be implemented in terms of addition and
+// multiplication ( x - y = x + -1*y)
+auto _minus_ = [](const Expression& a) -> Expression { 
+  Expression x = _cons_(a);
+  Expression y = _cons_(_cdr_(a));
+
+  if (boost::get<bool>(_atom_(x)) && boost::get<bool>(_atom_(y))) {
+    equality_visitor v;
+    return boost::apply_visitor(v,x,y);
+  }
+
+  return false;
+};
+
+// * x y - multiplication
+auto _mult_ = [](const Expression& a) -> Expression { 
+  Expression x = _cons_(a);
+  Expression y = _cons_(_cdr_(a));
+
+  if (boost::get<bool>(_atom_(x)) && boost::get<bool>(_atom_(y))) {
+    equality_visitor v;
+    return boost::apply_visitor(v,x,y);
+  }
+
+  return false;
+};
+
 
 // TODO: add all functions to default Env
 Env global_env = {
